@@ -27,6 +27,8 @@ import (
 	// Uncomment the following line to load the gcp plugin (only required to authenticate against GKE clusters).
 	// _ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 
+	cloudsvcapi "github.com/abccloud/abccloud-go-sdk/service/instances"
+	cloudconfig "github.com/abccloud/config"
 	clientset "k8s.io/sample-controller/pkg/generated/clientset/versioned"
 	informers "k8s.io/sample-controller/pkg/generated/informers/externalversions"
 	"k8s.io/sample-controller/pkg/signals"
@@ -38,7 +40,9 @@ var (
 )
 
 func main() {
+	klog.InitFlags(nil)
 	flag.Parse()
+	flag.Set("alsologtostderr", "true")
 
 	// set up signals so we handle the first shutdown signal gracefully
 	stopCh := signals.SetupSignalHandler()
@@ -61,14 +65,27 @@ func main() {
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeClient, time.Second*30)
 	exampleInformerFactory := informers.NewSharedInformerFactory(exampleClient, time.Second*30)
 
+	secretValues := cloudconfig.Value{
+		AccessKeyID:     "dummy",
+		SecretAccessKey: "dummy",
+	}
+	cloudConfig := cloudconfig.Config{Credentials: secretValues}
 	controller := NewController(kubeClient, exampleClient,
 		kubeInformerFactory.Apps().V1().Deployments(),
-		exampleInformerFactory.Samplecontroller().V1alpha1().Foos())
+		exampleInformerFactory.Samplecontroller().V1alpha1().Foos(), *cloudsvcapi.New(&cloudConfig))
 
 	// notice that there is no need to run Start methods in a separate goroutine. (i.e. go kubeInformerFactory.Start(stopCh)
 	// Start method is non-blocking and runs all registered informers in a dedicated goroutine.
 	kubeInformerFactory.Start(stopCh)
 	exampleInformerFactory.Start(stopCh)
+
+	var wg wait.Group
+	defer wg.Wait()
+	wg.Add(1)
+	go func() {
+		controller.CollectGarbageAndUpdateCPUForever(stopCh)
+		wg.Done()
+	}()
 
 	if err = controller.Run(2, stopCh); err != nil {
 		klog.Fatalf("Error running controller: %s", err.Error())
