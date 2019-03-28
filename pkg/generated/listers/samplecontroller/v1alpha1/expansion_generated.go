@@ -18,10 +18,10 @@ limitations under the License.
 
 package v1alpha1
 
-// FooListerExpansion allows custom methods to be added to
-// FooLister.
-type FooListerExpansion interface{}
+// VMListerExpansion allows custom methods to be added to
+// VMLister.
+type VMListerExpansion interface{}
 
-// FooNamespaceListerExpansion allows custom methods to be added to
-// FooNamespaceLister.
-type FooNamespaceListerExpansion interface{}
+// VMNamespaceListerExpansion allows custom methods to be added to
+// VMNamespaceLister.
+type VMNamespaceListerExpansion interface{}
