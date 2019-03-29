@@ -29,6 +29,7 @@ import (
 
 	cloudsvcapi "github.com/abccloud/abccloud-go-sdk/service/instances"
 	cloudconfig "github.com/abccloud/config"
+	"k8s.io/sample-controller/metrics"
 	clientset "k8s.io/sample-controller/pkg/generated/clientset/versioned"
 	informers "k8s.io/sample-controller/pkg/generated/informers/externalversions"
 	"k8s.io/sample-controller/pkg/signals"
@@ -78,6 +79,8 @@ func main() {
 	// Start method is non-blocking and runs all registered informers in a dedicated goroutine.
 	kubeInformerFactory.Start(stopCh)
 	exampleInformerFactory.Start(stopCh)
+
+	metrics.RegisterAll()
 
 	var wg wait.Group
 	defer wg.Wait()

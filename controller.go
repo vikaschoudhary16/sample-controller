@@ -37,6 +37,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
 
+	"k8s.io/sample-controller/metrics"
 	samplev1alpha1 "k8s.io/sample-controller/pkg/apis/samplecontroller/v1alpha1"
 	clientset "k8s.io/sample-controller/pkg/generated/clientset/versioned"
 	samplescheme "k8s.io/sample-controller/pkg/generated/clientset/versioned/scheme"
@@ -303,14 +304,18 @@ func (c *Controller) syncAddHandler(namespace string, name string) error {
 	}
 
 	// create cloud vm instance
+	createStartTime := time.Now()
 	resp := c.vmSvc.Create(cloudsvcapi.CreateRequest{Name: vmName})
+	metrics.UpdateDurationFromStart(metrics.Create, createStartTime)
 	if resp.StatusCode != cloudsvcapi.STATUS_CODE_CREATE_SUCCESS {
 		if resp.StatusCode == cloudsvcapi.STATUS_CODE_CREATE_FAILURE_NAME_DUPLICATION {
 			// There is no chance that this error is going to fix on retry, so just log error and do not retry
 			utilruntime.HandleError(fmt.Errorf("%s: cloud instance create failed!!! vm with name %s already exists!!!", key, vmName))
+			metrics.RegisterFailedCreate(metrics.DuplicateName)
 			return nil
 
 		}
+		metrics.RegisterFailedCreate(metrics.NotSure)
 		// In any other failure lets keep on retrying until max number of time
 		return fmt.Errorf("%s: cloud instance create failed, Retrying !!!", key)
 	}
@@ -349,12 +354,15 @@ func (c *Controller) syncDeleteHandler(namespace string, name string) error {
 		utilruntime.HandleError(fmt.Errorf("vm '%s' has no reference to any cloud instance. Removing finalizer so that its deletion can progress", key))
 		return nil
 	}
+	deleteStartTime := time.Now()
 	resp := c.vmSvc.Delete(cloudsvcapi.DeleteRequest{Uuid: vm.Status.VMId})
+	metrics.UpdateDurationFromStart(metrics.Delete, deleteStartTime)
 	if resp.StatusCode == cloudsvcapi.STATUS_CODE_DELETE_SUCCESS {
 		//remove Finalizer
 		vm.ObjectMeta.Finalizers = util.Filter(vm.ObjectMeta.Finalizers, samplev1alpha1.VMFinalizer)
 		if _, err := c.sampleclientset.SamplecontrollerV1alpha1().VMs(vm.Namespace).Update(vm); err != nil {
 			utilruntime.HandleError(fmt.Errorf("failed to remove finalizer from VM object %v due to error %v.", name, err))
+			metrics.RegisterError(fmt.Errorf("failed to remove finalizer from VM object %v due to error %v.", name, err))
 			return err
 		}
 		return nil
@@ -440,6 +448,7 @@ func (c *Controller) CollectGarbageAndUpdateCPUForever(stopCh <-chan struct{}) {
 		select {
 		case <-time.After(*time.Second * 5):
 			{
+				metrics.UpdateLastTimeGC(metrics.GarbageCollect, loopStart)
 				loopStart := time.Now()
 				runOnce(loopStart)
 			}
@@ -470,6 +479,7 @@ func (c *Controller) runOnce(currentTime time.Time) {
 	resp := c.vmSvc.List()
 	if resp.StatusCode == cloudsvcapi.STATUS_CODE_FAILURE {
 		klog.Errorf("Error in listing instances at cloud: %v", resp.StatusCode)
+		metrics.RegisterError(fmt.Errorf("Error in listing instances at cloud: %v", resp.StatusCode))
 		return
 	}
 	for _, vm := range vms {
@@ -478,6 +488,7 @@ func (c *Controller) runOnce(currentTime time.Time) {
 				iStatus := cloudsvcapi.GetStatus(instance.Uuid)
 				if iStatus.StatusCode != cloudsvcapi.STATUS_CODE_SUCCESS {
 					klog.Errorf("Error in getting instance status for vm %s: %v", vm.Name, iStatus.StatusCode)
+					metrics.RegisterError(fmt.Errorf("Error in getting instance status for vm %s: %v", vm.Name, iStatus.StatusCode))
 				}
 				vm.Status.CPUUtilization = iStatus.CPUUtilization
 				append(LinkedInstances, instance.Uuid)
@@ -498,7 +509,7 @@ func (c *Controller) runOnce(currentTime time.Time) {
 					resp := cloudsvcapi.Delete(cloudsvcapi.DeleteRequest{Uuid: instance.Uuid})
 					if resp.StatusCode != cloudsvcapi.STATUS_CODE_DELETE_SUCCESS {
 						klog.Errorf("Error in deleting instance %s : %v", instance.Name, resp.StatusCode)
-						// TODO update metric
+						metrics.RegisterError(fmt.Errorf("Error in deleting instance %s : %v", instance.Name, resp.StatusCode))
 					} else {
 						delete(UnlinkedInstances, instance.Uuid)
 					}
